@@ -36,6 +36,7 @@ function createApi() {
     addThread: vi.fn().mockResolvedValue({ id: 77 }),
     updateConversation: vi.fn().mockResolvedValue(undefined),
     createDraftReply: vi.fn().mockResolvedValue({ id: 88 }),
+    createConversation: vi.fn().mockResolvedValue({ id: 500, number: 900 }),
     searchConversations: vi.fn().mockResolvedValue({
       _embedded: { conversations: [conversation] },
       page: { size: 50, totalElements: 1, number: 1, totalPages: 1 },
@@ -75,15 +76,15 @@ describe('buildServer', () => {
     vi.unstubAllEnvs();
   });
 
-  it('registers the eight tools without declared output schemas', () => {
+  it('registers the nine tools without declared output schemas', () => {
     const server = buildServer({ api: createApi() as never });
     const tools = registeredTools(server);
 
-    expect(Object.keys(tools)).toHaveLength(8);
+    expect(Object.keys(tools)).toHaveLength(9);
     expect(Object.values(tools).every((tool) => tool.outputSchema === undefined)).toBe(true);
   });
 
-  it('preserves the eight tool behaviors and structured content where it is stable', async () => {
+  it('preserves the tool behaviors and structured content where it is stable', async () => {
     const api = createApi();
     const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
 
@@ -131,6 +132,61 @@ describe('buildServer', () => {
       7,
       conversation.to ? { to: conversation.to, cc: conversation.cc, bcc: conversation.bcc } : {}
     );
+  });
+});
+
+describe('freescout_create_conversation', () => {
+  it('saves a draft email by default for a customer email', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    const result = await execute(tools, 'freescout_create_conversation', {
+      mailboxId: 4,
+      subject: 'Your order',
+      customerEmail: 'casey@example.com',
+      customerFirstName: 'Casey',
+      text: 'Hello **Casey**',
+      cc: ['team@example.com'],
+    });
+
+    expect(api.createConversation).toHaveBeenCalledWith({
+      mailboxId: 4,
+      subject: 'Your order',
+      customer: { email: 'casey@example.com', firstName: 'Casey' },
+      text: 'Hello **Casey**',
+      userId: 7,
+      state: 'draft',
+      status: undefined,
+      assignTo: undefined,
+      cc: ['team@example.com'],
+      bcc: undefined,
+    });
+    expect(result.structuredContent).toMatchObject({
+      success: true,
+      conversationId: 500,
+      number: 900,
+      state: 'draft',
+    });
+  });
+
+  it('publishes the email when send is true and prefers customerId', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    const result = await execute(tools, 'freescout_create_conversation', {
+      mailboxId: 4,
+      subject: 'Follow-up',
+      customerId: 15,
+      customerEmail: 'ignored@example.com',
+      text: 'Hi',
+      send: true,
+      userId: 3,
+    });
+
+    expect(api.createConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: { id: 15 }, userId: 3, state: 'published' })
+    );
+    expect(result.structuredContent).toMatchObject({ state: 'published' });
   });
 });
 

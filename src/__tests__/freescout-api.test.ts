@@ -434,6 +434,77 @@ describe('FreeScoutAPI', () => {
     });
   });
 
+  describe('createConversation', () => {
+    it('should POST a draft email conversation with formatted text', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ id: 500, number: 900 }),
+      });
+
+      const result = await api.createConversation({
+        mailboxId: 4,
+        subject: 'Your order',
+        customer: { email: 'casey@example.com' },
+        text: 'Hello **Casey**',
+        userId: 7,
+        cc: ['team@example.com'],
+        bcc: [],
+      });
+
+      expect(result).toEqual({ id: 500, number: 900 });
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${mockBaseUrl}/api/conversations`,
+        expect.objectContaining({ method: 'POST' })
+      );
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body).toEqual({
+        type: 'email',
+        mailboxId: 4,
+        subject: 'Your order',
+        customer: { email: 'casey@example.com' },
+        state: 'draft',
+        threads: [
+          {
+            type: 'message',
+            text: '<p>Hello <strong>Casey</strong></p>',
+            user: 7,
+            state: 'draft',
+            cc: ['team@example.com'],
+          },
+        ],
+      });
+    });
+
+    it('should publish and pass status and assignee when requested', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ id: 501, number: 901 }),
+      });
+
+      await api.createConversation({
+        mailboxId: 4,
+        subject: 'Hi',
+        customer: { id: 15 },
+        text: 'Plain text',
+        userId: 7,
+        state: 'published',
+        status: 'pending',
+        assignTo: 11,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body).toMatchObject({
+        state: 'published',
+        status: 'pending',
+        assignTo: 11,
+        customer: { id: 15 },
+        threads: [{ state: 'published', text: 'Plain text' }],
+      });
+    });
+  });
+
   describe('addThread', () => {
     it('should add a thread to a conversation', async () => {
       mockFetch.mockResolvedValueOnce({

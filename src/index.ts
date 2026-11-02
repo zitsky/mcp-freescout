@@ -19,6 +19,7 @@ const packageJson = require('../package.json') as PackageJson;
 type FreeScoutApiPort = Pick<
   FreeScoutAPI,
   | 'addThread'
+  | 'createConversation'
   | 'createDraftReply'
   | 'getConversation'
   | 'getMailboxes'
@@ -291,7 +292,117 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 6: Get Ticket Context
+  // Tool 6: Create Conversation (new email)
+  server.registerTool(
+    'freescout_create_conversation',
+    {
+      title: 'Create Conversation (New Email)',
+      description:
+        'Create a new outgoing email conversation to a customer in a FreeScout mailbox. By default it is saved as a draft that an agent reviews and sends from FreeScout; pass send: true to send the email immediately. Use freescout_get_mailboxes to find mailboxId. Markdown in text is converted to HTML.',
+      inputSchema: z
+        .object({
+          mailboxId: z.number().int().positive().describe('Mailbox ID to send from'),
+          subject: z.string().min(1).describe('Email subject'),
+          customerEmail: z
+            .string()
+            .email()
+            .optional()
+            .describe('Recipient email; the customer is looked up or created by it'),
+          customerId: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe('Existing customer ID (takes precedence over customerEmail)'),
+          customerFirstName: z
+            .string()
+            .optional()
+            .describe('First name, used only when a new customer is created'),
+          customerLastName: z
+            .string()
+            .optional()
+            .describe('Last name, used only when a new customer is created'),
+          text: z.string().min(1).describe('Email body (Markdown or HTML)'),
+          cc: z.array(z.string().email()).optional().describe('CC recipients'),
+          bcc: z.array(z.string().email()).optional().describe('BCC recipients'),
+          send: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe('true sends the email now; false (default) saves it as a draft'),
+          status: z
+            .enum(['active', 'pending', 'closed'])
+            .optional()
+            .describe('Conversation status after creation'),
+          assignTo: z.number().int().positive().optional().describe('User ID to assign to'),
+          userId: z.number().optional().describe('User ID authoring the email (default: from env)'),
+        })
+        .refine((input) => input.customerEmail || input.customerId, {
+          message: 'Either customerEmail or customerId is required',
+        }),
+    },
+    async ({
+      mailboxId,
+      subject,
+      customerEmail,
+      customerId,
+      customerFirstName,
+      customerLastName,
+      text,
+      cc,
+      bcc,
+      send,
+      status,
+      assignTo,
+      userId,
+    }) => {
+      const customer = customerId
+        ? { id: customerId }
+        : {
+            email: customerEmail,
+            ...(customerFirstName ? { firstName: customerFirstName } : {}),
+            ...(customerLastName ? { lastName: customerLastName } : {}),
+          };
+      const isSent = send ?? false;
+
+      const conversation = await api.createConversation({
+        mailboxId,
+        subject,
+        customer,
+        text,
+        userId: userId ?? defaultUserId,
+        state: isSent ? 'published' : 'draft',
+        status,
+        assignTo,
+        cc,
+        bcc,
+      });
+
+      const output = {
+        success: true,
+        message: isSent
+          ? `Email sent: conversation #${conversation.number} created`
+          : `Draft email saved: conversation #${conversation.number} created`,
+        conversationId: conversation.id,
+        number: conversation.number,
+        state: isSent ? 'published' : 'draft',
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: isSent
+              ? `✅ ${output.message}\n\nConversation ID: ${conversation.id}`
+              : `✅ ${output.message}\n\nConversation ID: ${conversation.id}\n\nThe email is saved as a draft and can be reviewed, edited, and sent from the FreeScout interface.`,
+          },
+        ],
+        structuredContent: output,
+      };
+    }
+  );
+
+  // Tool 7: Get Ticket Context
   server.registerTool(
     'freescout_get_ticket_context',
     {
@@ -352,7 +463,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 7: Search Tickets
+  // Tool 8: Search Tickets
   server.registerTool(
     'freescout_search_tickets',
     {
@@ -423,7 +534,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 8: Get Mailboxes
+  // Tool 9: Get Mailboxes
   server.registerTool(
     'freescout_get_mailboxes',
     {

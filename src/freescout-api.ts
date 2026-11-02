@@ -1,4 +1,5 @@
 import type {
+  CreateConversationInput,
   FreeScoutConversation,
   FreeScoutApiResponse,
   FreeScoutRecipients,
@@ -401,6 +402,53 @@ export class FreeScoutAPI {
     recipients?: FreeScoutRecipients
   ): Promise<FreeScoutThread> {
     return this.addThread(ticketId, 'message', text, userId, 'draft', recipients);
+  }
+
+  /**
+   * Create a new outgoing conversation (a new email from an agent to a customer).
+   */
+  async createConversation(input: CreateConversationInput): Promise<FreeScoutConversation> {
+    const state = input.state ?? 'draft';
+    const thread: {
+      type: 'message';
+      text: string;
+      user: number;
+      state: 'draft' | 'published';
+      cc?: string[];
+      bcc?: string[];
+    } = {
+      type: 'message',
+      text: this.formatForFreeScoutEditor(input.text),
+      user: input.userId,
+      state,
+    };
+
+    if (input.cc?.length) {
+      thread.cc = input.cc;
+    }
+
+    if (input.bcc?.length) {
+      thread.bcc = input.bcc;
+    }
+
+    const body: Record<string, unknown> = {
+      type: input.type ?? 'email',
+      mailboxId: input.mailboxId,
+      subject: input.subject,
+      customer: input.customer,
+      state,
+      threads: [thread],
+    };
+
+    if (input.status) {
+      body.status = input.status;
+    }
+
+    if (input.assignTo) {
+      body.assignTo = input.assignTo;
+    }
+
+    return this.request<FreeScoutConversation>('/conversations', 'POST', body);
   }
 
   async updateConversation(

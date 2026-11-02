@@ -98,18 +98,12 @@ export const SearchFiltersSchema = z.object({
     .string()
     .optional()
     .describe('Alias for `subject`: matches the conversation subject only, not message bodies.'),
-  subject: z
-    .string()
-    .optional()
-    .describe('Filter by conversation subject (partial match).'),
+  subject: z.string().optional().describe('Filter by conversation subject (partial match).'),
   customerEmail: z
     .string()
     .optional()
     .describe('Filter by the customer email address on the conversation.'),
-  number: z
-    .number()
-    .optional()
-    .describe('Look up a single conversation by its ticket number.'),
+  number: z.number().optional().describe('Look up a single conversation by its ticket number.'),
   assignee: z.union([z.literal('unassigned'), z.literal('any'), z.number()]).optional(),
   updatedSince: z.string().optional(), // ISO date or relative like "7d", "24h"
   createdSince: z.string().optional(),
@@ -131,6 +125,27 @@ export type TicketAnalysis = z.infer<typeof TicketAnalysisSchema>;
 export type SearchFilters = z.infer<typeof SearchFiltersSchema>;
 export interface FreeScoutRecipients {
   to?: string[];
+  cc?: string[];
+  bcc?: string[];
+}
+
+export interface CreateConversationInput {
+  mailboxId: number;
+  subject: string;
+  customer: {
+    id?: number;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  text: string;
+  userId: number;
+  type?: 'email' | 'phone';
+  // 'draft' keeps both the conversation and its first thread as drafts, so
+  // nothing is emailed until an agent sends it from the FreeScout UI.
+  state?: 'draft' | 'published';
+  status?: 'active' | 'pending' | 'closed';
+  assignTo?: number;
   cc?: string[];
   bcc?: string[];
 }

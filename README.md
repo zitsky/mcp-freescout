@@ -281,6 +281,28 @@ If recipient fields are omitted, the server preserves the current conversation r
 
 ![Draft reply automatically saved to FreeScout](https://github.com/user-attachments/assets/689bd675-cb34-414e-b18f-d50d4424ace6)
 
+#### `freescout_create_conversation`
+
+Create a new outgoing email conversation to a customer (a brand-new email, not a reply). **By default it is saved as a draft** — nothing is emailed until an agent reviews and sends it in FreeScout. Pass `send: true` to send immediately. Markdown is converted to HTML.
+
+**Parameters:**
+
+- `mailboxId` (required): Mailbox to send from (see `freescout_get_mailboxes`)
+- `subject` (required): Email subject
+- `customerEmail` or `customerId` (one required): Recipient. An unknown email creates a new customer; `customerId` takes precedence
+- `customerFirstName`, `customerLastName` (optional): Used only when a new customer is created
+- `text` (required): Email body (Markdown or HTML)
+- `cc`, `bcc` (optional): Additional recipients
+- `send` (optional, default `false`): `true` sends now, `false` saves a draft
+- `status` (optional): `active`, `pending`, or `closed`
+- `assignTo` (optional): User ID to assign the conversation to
+- `userId` (optional): Author user ID (defaults to env setting)
+
+**Natural Language Examples:**
+
+- "Draft a new email to jane@example.com from the Support mailbox about her refund"
+- "Send an email to customer 42 with subject 'Your account' and assign it to user 3"
+
 #### `freescout_get_ticket_context`
 
 Get ticket context and customer information to help craft personalized replies.
