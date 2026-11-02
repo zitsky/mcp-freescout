@@ -129,6 +129,14 @@ export interface FreeScoutRecipients {
   bcc?: string[];
 }
 
+export interface FreeScoutUser {
+  id: number;
+  firstName?: string;
+  lastName?: string;
+  email: string;
+  role?: string;
+}
+
 export interface CreateConversationInput {
   mailboxId: number;
   subject: string;

@@ -19,10 +19,12 @@ const packageJson = require('../package.json') as PackageJson;
 type FreeScoutApiPort = Pick<
   FreeScoutAPI,
   | 'addThread'
+  | 'canUserAccessMailbox'
   | 'createConversation'
   | 'createDraftReply'
   | 'getConversation'
   | 'getMailboxes'
+  | 'getUsers'
   | 'parseTicketInput'
   | 'searchConversations'
   | 'updateConversation'
@@ -298,7 +300,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     {
       title: 'Create Conversation (New Email)',
       description:
-        'Create a new outgoing email conversation to a customer in a FreeScout mailbox. By default it is saved as a draft that an agent reviews and sends from FreeScout; pass send: true to send the email immediately. Use freescout_get_mailboxes to find mailboxId. Markdown in text is converted to HTML.',
+        'Create a new outgoing email conversation to a customer in a FreeScout mailbox. By default it is saved as a draft that an agent reviews and sends from FreeScout; pass send: true to send the email immediately. Use freescout_get_mailboxes (with userId) to find a mailboxId the author can write from; the author must have access to the mailbox. Markdown in text is converted to HTML.',
       inputSchema: z
         .object({
           mailboxId: z.number().int().positive().describe('Mailbox ID to send from'),
@@ -336,6 +338,13 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
             .describe('Conversation status after creation'),
           assignTo: z.number().int().positive().optional().describe('User ID to assign to'),
           userId: z.number().optional().describe('User ID authoring the email (default: from env)'),
+          fromUserEmail: z
+            .string()
+            .email()
+            .optional()
+            .describe(
+              'Email of the FreeScout user authoring the email, resolved to a user ID (alternative to userId; see freescout_get_users)'
+            ),
         })
         .refine((input) => input.customerEmail || input.customerId, {
           message: 'Either customerEmail or customerId is required',
@@ -355,7 +364,23 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
       status,
       assignTo,
       userId,
+      fromUserEmail,
     }) => {
+      let authorId = userId ?? defaultUserId;
+      if (userId === undefined && fromUserEmail) {
+        const [user] = await api.getUsers(fromUserEmail);
+        if (!user) {
+          throw new Error(`FreeScout user not found: ${fromUserEmail}`);
+        }
+        authorId = user.id;
+      }
+
+      if (!(await api.canUserAccessMailbox(authorId, mailboxId))) {
+        throw new Error(
+          `FreeScout user ${authorId} has no access to mailbox ${mailboxId}. Use freescout_get_mailboxes with userId to see the mailboxes this user can write from.`
+        );
+      }
+
       const customer = customerId
         ? { id: customerId }
         : {
@@ -370,7 +395,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
         subject,
         customer,
         text,
-        userId: userId ?? defaultUserId,
+        userId: authorId,
         state: isSent ? 'published' : 'draft',
         status,
         assignTo,
@@ -534,16 +559,44 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 9: Get Mailboxes
+  // Tool 9: Get Users
+  server.registerTool(
+    'freescout_get_users',
+    {
+      title: 'Get Users',
+      description:
+        'List FreeScout users (agents) with their IDs, names and emails. Use the ID as userId (author) or assignTo in other tools.',
+      inputSchema: z.object({
+        email: z.string().email().optional().describe('Filter by exact user email'),
+      }),
+    },
+    async ({ email }) => {
+      const users = await api.getUsers(email);
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(users, null, 2) }],
+      };
+    }
+  );
+
+  // Tool 10: Get Mailboxes
   server.registerTool(
     'freescout_get_mailboxes',
     {
       title: 'Get Mailboxes',
-      description: 'Get list of available mailboxes',
-      inputSchema: z.object({}),
+      description:
+        'Get list of available mailboxes. Pass userId to get only the mailboxes that user has access to.',
+      inputSchema: z.object({
+        userId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Only mailboxes this user can access (admins see all)'),
+      }),
     },
-    async () => {
-      const mailboxes = await api.getMailboxes();
+    async ({ userId }) => {
+      const mailboxes = await api.getMailboxes(userId);
 
       return {
         content: [{ type: 'text', text: JSON.stringify(mailboxes, null, 2) }],

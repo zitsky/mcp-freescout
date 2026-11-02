@@ -42,6 +42,8 @@ function createApi() {
       page: { size: 50, totalElements: 1, number: 1, totalPages: 1 },
     }),
     getMailboxes: vi.fn().mockResolvedValue([{ id: 4, name: 'Support' }]),
+    canUserAccessMailbox: vi.fn().mockResolvedValue(true),
+    getUsers: vi.fn().mockResolvedValue([{ id: 21, email: 'anna@example.com' }]),
   };
 }
 
@@ -76,11 +78,11 @@ describe('buildServer', () => {
     vi.unstubAllEnvs();
   });
 
-  it('registers the nine tools without declared output schemas', () => {
+  it('registers the ten tools without declared output schemas', () => {
     const server = buildServer({ api: createApi() as never });
     const tools = registeredTools(server);
 
-    expect(Object.keys(tools)).toHaveLength(9);
+    expect(Object.keys(tools)).toHaveLength(10);
     expect(Object.values(tools).every((tool) => tool.outputSchema === undefined)).toBe(true);
   });
 
@@ -187,6 +189,69 @@ describe('freescout_create_conversation', () => {
       expect.objectContaining({ customer: { id: 15 }, userId: 3, state: 'published' })
     );
     expect(result.structuredContent).toMatchObject({ state: 'published' });
+  });
+});
+
+describe('freescout_create_conversation author', () => {
+  it('resolves fromUserEmail to a user ID', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await execute(tools, 'freescout_create_conversation', {
+      mailboxId: 4,
+      subject: 'Hi',
+      customerEmail: 'casey@example.com',
+      text: 'Hello',
+      fromUserEmail: 'anna@example.com',
+    });
+
+    expect(api.getUsers).toHaveBeenCalledWith('anna@example.com');
+    expect(api.createConversation).toHaveBeenCalledWith(expect.objectContaining({ userId: 21 }));
+  });
+
+  it('fails when fromUserEmail matches no user', async () => {
+    const api = createApi();
+    api.getUsers.mockResolvedValueOnce([]);
+    const tools = registeredTools(buildServer({ api: api as never }));
+
+    await expect(
+      execute(tools, 'freescout_create_conversation', {
+        mailboxId: 4,
+        subject: 'Hi',
+        customerEmail: 'casey@example.com',
+        text: 'Hello',
+        fromUserEmail: 'nobody@example.com',
+      })
+    ).rejects.toThrow('FreeScout user not found');
+    expect(api.createConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe('freescout_create_conversation mailbox access', () => {
+  it('refuses to create an email from a mailbox the author cannot access', async () => {
+    const api = createApi();
+    api.canUserAccessMailbox.mockResolvedValueOnce(false);
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await expect(
+      execute(tools, 'freescout_create_conversation', {
+        mailboxId: 4,
+        subject: 'Hi',
+        customerEmail: 'casey@example.com',
+        text: 'Hello',
+      })
+    ).rejects.toThrow('has no access to mailbox 4');
+    expect(api.canUserAccessMailbox).toHaveBeenCalledWith(7, 4);
+    expect(api.createConversation).not.toHaveBeenCalled();
+  });
+
+  it('passes userId through to the mailbox listing', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never }));
+
+    await execute(tools, 'freescout_get_mailboxes', { userId: 5 });
+
+    expect(api.getMailboxes).toHaveBeenCalledWith(5);
   });
 });
 

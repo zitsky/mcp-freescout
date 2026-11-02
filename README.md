@@ -297,6 +297,9 @@ Create a new outgoing email conversation to a customer (a brand-new email, not a
 - `status` (optional): `active`, `pending`, or `closed`
 - `assignTo` (optional): User ID to assign the conversation to
 - `userId` (optional): Author user ID (defaults to env setting)
+- `fromUserEmail` (optional): Author by FreeScout user email, resolved to an ID (alternative to `userId`)
+
+The author must have access to the mailbox (admins have access to all). The tool checks this before creating the email and fails otherwise; `freescout_get_mailboxes` with `userId` lists the mailboxes a user can write from.
 
 **Natural Language Examples:**
 
@@ -368,12 +371,21 @@ Search for tickets across your FreeScout instance.
 - Use **freescout_get_mailboxes** first if filtering by mailbox
 - Combine filters: `{ textSearch: "error", assignee: "unassigned", updatedSince: "24h" }`
 
+#### `freescout_get_users`
+
+List FreeScout users (agents) with IDs, names and emails, to pick an author (`userId`) or assignee (`assignTo`).
+
+**Parameters:**
+
+- `email` (optional): Filter by exact user email
+
 #### `freescout_get_mailboxes`
 
 Get a list of all available mailboxes in your FreeScout instance.
 
 **Parameters:**
-None
+
+- `userId` (optional): Only the mailboxes this user has access to (admins see all)
 
 **Natural Language Examples:**
 

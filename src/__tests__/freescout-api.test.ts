@@ -505,6 +505,43 @@ describe('FreeScoutAPI', () => {
     });
   });
 
+  describe('canUserAccessMailbox', () => {
+    it('checks the mailbox against the user-scoped mailbox list', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ _embedded: { mailboxes: [{ id: 1 }, { id: 3 }] } }),
+      });
+
+      await expect(api.canUserAccessMailbox(5, 3)).resolves.toBe(true);
+      await expect(api.canUserAccessMailbox(5, 2)).resolves.toBe(false);
+      expect(mockFetch.mock.calls[0][0]).toBe(`${mockBaseUrl}/api/mailboxes?userId=5&pageSize=100`);
+    });
+  });
+
+  describe('getUsers', () => {
+    it('should list users filtered by email', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ _embedded: { users: [{ id: 21, email: 'anna@example.com' }] } }),
+      });
+
+      const users = await api.getUsers('anna@example.com');
+
+      expect(users).toEqual([{ id: 21, email: 'anna@example.com' }]);
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        `${mockBaseUrl}/api/users?pageSize=100&email=anna%40example.com`
+      );
+    });
+
+    it('should return an empty list when FreeScout has no users embedded', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+
+      await expect(api.getUsers()).resolves.toEqual([]);
+    });
+  });
+
   describe('addThread', () => {
     it('should add a thread to a conversation', async () => {
       mockFetch.mockResolvedValueOnce({

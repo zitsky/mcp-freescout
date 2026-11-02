@@ -4,6 +4,7 @@ import type {
   FreeScoutApiResponse,
   FreeScoutRecipients,
   FreeScoutThread,
+  FreeScoutUser,
   SearchFilters,
 } from './types.js';
 
@@ -597,8 +598,40 @@ export class FreeScoutAPI {
     );
   }
 
-  async getMailboxes(): Promise<unknown> {
-    return this.request<unknown>('/mailboxes');
+  async getUsers(email?: string): Promise<FreeScoutUser[]> {
+    const params = new URLSearchParams({ pageSize: '100' });
+    if (email) {
+      params.append('email', email.trim());
+    }
+
+    const response = await this.request<{ _embedded?: { users?: FreeScoutUser[] } }>(
+      `/users?${params.toString()}`
+    );
+    return response._embedded?.users ?? [];
+  }
+
+  /**
+   * List mailboxes. With userId, FreeScout returns only the mailboxes that
+   * user has access to (all of them for admins).
+   */
+  async getMailboxes(userId?: number): Promise<unknown> {
+    if (userId === undefined) {
+      return this.request<unknown>('/mailboxes');
+    }
+
+    const params = new URLSearchParams({ userId: userId.toString(), pageSize: '100' });
+    return this.request<unknown>(`/mailboxes?${params.toString()}`);
+  }
+
+  /**
+   * The create-conversation API accepts any user as the author, so mailbox
+   * access has to be checked on our side.
+   */
+  async canUserAccessMailbox(userId: number, mailboxId: number): Promise<boolean> {
+    const response = (await this.getMailboxes(userId)) as {
+      _embedded?: { mailboxes?: Array<{ id: number }> };
+    };
+    return (response._embedded?.mailboxes ?? []).some((mailbox) => mailbox.id === mailboxId);
   }
 
   extractTicketIdFromUrl(url: string): string | null {
