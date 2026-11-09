@@ -1,6 +1,7 @@
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { vi } from 'vitest';
+import { draftVersion } from '../draft-version.js';
 import { buildServer, startStdioServer } from '../index.js';
 
 const conversation = {
@@ -36,6 +37,7 @@ function createApi() {
     addThread: vi.fn().mockResolvedValue({ id: 77 }),
     updateConversation: vi.fn().mockResolvedValue(undefined),
     createDraftReply: vi.fn().mockResolvedValue({ id: 88 }),
+    updateDraft: vi.fn().mockResolvedValue({ id: 88, body: '<p>saved</p>' }),
     createConversation: vi.fn().mockResolvedValue({ id: 500, number: 900 }),
     searchConversations: vi.fn().mockResolvedValue({
       _embedded: { conversations: [conversation] },
@@ -78,11 +80,11 @@ describe('buildServer', () => {
     vi.unstubAllEnvs();
   });
 
-  it('registers the ten tools without declared output schemas', () => {
+  it('registers the eleven tools without declared output schemas', () => {
     const server = buildServer({ api: createApi() as never });
     const tools = registeredTools(server);
 
-    expect(Object.keys(tools)).toHaveLength(10);
+    expect(Object.keys(tools)).toHaveLength(11);
     expect(Object.values(tools).every((tool) => tool.outputSchema === undefined)).toBe(true);
   });
 
@@ -252,6 +254,123 @@ describe('freescout_create_conversation mailbox access', () => {
     await execute(tools, 'freescout_get_mailboxes', { userId: 5 });
 
     expect(api.getMailboxes).toHaveBeenCalledWith(5);
+  });
+});
+
+describe('freescout_update_draft', () => {
+  const withThreads = (threads: unknown[]) => ({ ...conversation, _embedded: { threads } });
+
+  it('updates only the passed fields of the given draft', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    const result = await execute(tools, 'freescout_update_draft', {
+      ticket: '123',
+      draftId: 88,
+      text: 'Better text',
+      expectedVersion: 'v1',
+      cc: [],
+    });
+
+    expect(api.getConversation).not.toHaveBeenCalled();
+    expect(api.updateDraft).toHaveBeenCalledWith('123', 88, 7, {
+      text: 'Better text',
+      expectedVersion: 'v1',
+      cc: [],
+    });
+    expect(result.structuredContent).toMatchObject({
+      success: true,
+      ticketId: '123',
+      draftId: 88,
+      draftVersion: draftVersion('<p>saved</p>'),
+    });
+  });
+
+  it("finds the author's only draft when draftId is omitted", async () => {
+    const api = createApi();
+    api.getConversation.mockResolvedValueOnce(
+      withThreads([
+        { id: 1, state: 'published', createdBy: { id: 7 } },
+        { id: 2, state: 'draft', createdBy: { id: 9 } },
+        { id: 3, state: 'draft', createdBy: { id: 7 } },
+      ]) as never
+    );
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await execute(tools, 'freescout_update_draft', { ticket: '123', subject: 'New' });
+
+    expect(api.updateDraft).toHaveBeenCalledWith('123', 3, 7, { subject: 'New' });
+  });
+
+  it('resolves the author from fromUserEmail', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await execute(tools, 'freescout_update_draft', {
+      ticket: '123',
+      draftId: 88,
+      subject: 'Hi',
+      fromUserEmail: 'anna@example.com',
+    });
+
+    expect(api.updateDraft).toHaveBeenCalledWith('123', 88, 21, { subject: 'Hi' });
+  });
+
+  it('requires expectedVersion when replacing the text', async () => {
+    const api = createApi();
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await expect(
+      execute(tools, 'freescout_update_draft', { ticket: '123', draftId: 88, text: 'Hi' })
+    ).rejects.toThrow('expectedVersion is required');
+    expect(api.updateDraft).not.toHaveBeenCalled();
+  });
+
+  it('exposes draftVersion only on draft threads in freescout_get_ticket', async () => {
+    const api = createApi();
+    api.getConversation.mockResolvedValueOnce(
+      withThreads([
+        { id: 1, state: 'published', body: 'sent' },
+        { id: 2, state: 'draft', body: '<p>Привет ✓</p>' },
+      ]) as never
+    );
+    const tools = registeredTools(buildServer({ api: api as never }));
+
+    const result = await execute(tools, 'freescout_get_ticket', { ticket: '123' });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    const threads = JSON.parse(text)._embedded.threads;
+
+    expect(threads[0].draftVersion).toBeUndefined();
+    expect(threads[1].draftVersion).toBe(draftVersion('<p>Привет ✓</p>'));
+  });
+
+  it('fails without a draft by the author', async () => {
+    const api = createApi();
+    api.getConversation.mockResolvedValueOnce(
+      withThreads([{ id: 2, state: 'draft', createdBy: { id: 9 } }]) as never
+    );
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await expect(
+      execute(tools, 'freescout_update_draft', { ticket: '123', subject: 'Hi' })
+    ).rejects.toThrow('No draft by user 7');
+    expect(api.updateDraft).not.toHaveBeenCalled();
+  });
+
+  it('asks for draftId when the author has several drafts', async () => {
+    const api = createApi();
+    api.getConversation.mockResolvedValueOnce(
+      withThreads([
+        { id: 3, state: 'draft', createdBy: { id: 7 } },
+        { id: 4, state: 'draft', createdBy: { id: 7 } },
+      ]) as never
+    );
+    const tools = registeredTools(buildServer({ api: api as never, defaultUserId: 7 }));
+
+    await expect(
+      execute(tools, 'freescout_update_draft', { ticket: '123', subject: 'Hi' })
+    ).rejects.toThrow('pass draftId: 3, 4');
+    expect(api.updateDraft).not.toHaveBeenCalled();
   });
 });
 

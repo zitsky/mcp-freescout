@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { z } from 'zod';
 import { resolveDraftReplyRecipients, shouldInheritDraftRecipients } from './draft-recipients.js';
+import { draftVersion } from './draft-version.js';
 import { FreeScoutAPI } from './freescout-api.js';
 import { installStdioLifecycle, type StdioLifecycle } from './stdio-lifecycle.js';
 import { TicketAnalyzer } from './ticket-analyzer.js';
@@ -28,6 +29,7 @@ type FreeScoutApiPort = Pick<
   | 'parseTicketInput'
   | 'searchConversations'
   | 'updateConversation'
+  | 'updateDraft'
 >;
 
 type TicketAnalyzerPort = Pick<TicketAnalyzer, 'analyzeConversation' | 'stripHtml'>;
@@ -88,6 +90,18 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     version: options.version ?? packageJson.version,
   });
 
+  const resolveAuthorId = async (userId?: number, fromUserEmail?: string): Promise<number> => {
+    if (userId !== undefined || !fromUserEmail) {
+      return userId ?? defaultUserId;
+    }
+
+    const [user] = await api.getUsers(fromUserEmail);
+    if (!user) {
+      throw new Error(`FreeScout user not found: ${fromUserEmail}`);
+    }
+    return user.id;
+  };
+
   // Tool 1: Get Ticket
   server.registerTool(
     'freescout_get_ticket',
@@ -106,9 +120,23 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     async ({ ticket, includeThreads }) => {
       const ticketId = api.parseTicketInput(ticket);
       const conversation = await api.getConversation(ticketId, includeThreads ?? true);
+      const threads = conversation._embedded?.threads;
+      const output = threads
+        ? {
+            ...conversation,
+            _embedded: {
+              ...conversation._embedded,
+              threads: threads.map((thread) =>
+                thread.state === 'draft'
+                  ? { ...thread, draftVersion: draftVersion(thread.body) }
+                  : thread
+              ),
+            },
+          }
+        : conversation;
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(conversation, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
       };
     }
   );
@@ -366,14 +394,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
       userId,
       fromUserEmail,
     }) => {
-      let authorId = userId ?? defaultUserId;
-      if (userId === undefined && fromUserEmail) {
-        const [user] = await api.getUsers(fromUserEmail);
-        if (!user) {
-          throw new Error(`FreeScout user not found: ${fromUserEmail}`);
-        }
-        authorId = user.id;
-      }
+      const authorId = await resolveAuthorId(userId, fromUserEmail);
 
       if (!(await api.canUserAccessMailbox(authorId, mailboxId))) {
         throw new Error(
@@ -427,7 +448,114 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 7: Get Ticket Context
+  // Tool 7: Update Draft
+  server.registerTool(
+    'freescout_update_draft',
+    {
+      title: 'Update Draft',
+      description:
+        'Edit an existing draft in place: a draft reply or a draft email created with freescout_create_conversation. Only the fields passed are changed. text replaces the whole body and requires expectedVersion: read the draft with freescout_get_ticket and pass its draftVersion, so an edit made since then by an agent is not overwritten. Nothing is sent to the customer. Only the draft author can edit it. Markdown in text is converted to HTML.',
+      inputSchema: z
+        .object({
+          ticket: z.string().describe('Ticket ID, ticket number, or FreeScout URL'),
+          draftId: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Draft thread ID. Omit to use the author's only draft in the ticket"),
+          text: z.string().min(1).optional().describe('New full body (Markdown or HTML)'),
+          expectedVersion: z
+            .string()
+            .optional()
+            .describe(
+              'draftVersion of the draft from freescout_get_ticket, or from the previous freescout_update_draft result. Required with text'
+            ),
+          subject: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('New subject; only for draft emails, not for draft replies'),
+          to: z.array(z.string().email()).min(1).optional().describe('New TO recipients'),
+          cc: z.array(z.string().email()).optional().describe('New CC recipients; [] clears'),
+          bcc: z.array(z.string().email()).optional().describe('New BCC recipients; [] clears'),
+          userId: z.number().optional().describe('Draft author user ID (default: from env)'),
+          fromUserEmail: z
+            .string()
+            .email()
+            .optional()
+            .describe('Draft author by FreeScout user email (alternative to userId)'),
+        })
+        .refine(
+          (input) =>
+            [input.text, input.subject, input.to, input.cc, input.bcc].some(
+              (field) => field !== undefined
+            ),
+          { message: 'Provide at least one of text, subject, to, cc, bcc' }
+        ),
+    },
+    async ({
+      ticket,
+      draftId,
+      text,
+      expectedVersion,
+      subject,
+      to,
+      cc,
+      bcc,
+      userId,
+      fromUserEmail,
+    }) => {
+      if (text !== undefined && expectedVersion === undefined) {
+        throw new Error(
+          'expectedVersion is required with text: read the draft with freescout_get_ticket and pass its draftVersion'
+        );
+      }
+
+      const ticketId = api.parseTicketInput(ticket);
+      const authorId = await resolveAuthorId(userId, fromUserEmail);
+
+      let targetDraftId = draftId;
+      if (targetDraftId === undefined) {
+        const conversation = await api.getConversation(ticketId, true);
+        const drafts = (conversation._embedded?.threads ?? []).filter(
+          (thread) => thread.state === 'draft' && thread.createdBy?.id === authorId
+        );
+
+        if (drafts.length === 0) {
+          throw new Error(`No draft by user ${authorId} found in ticket #${ticketId}`);
+        }
+        if (drafts.length > 1) {
+          throw new Error(
+            `User ${authorId} has several drafts in ticket #${ticketId}, pass draftId: ${drafts.map((draft) => draft.id).join(', ')}`
+          );
+        }
+        targetDraftId = drafts[0].id;
+      }
+
+      const updates = Object.fromEntries(
+        Object.entries({ text, expectedVersion, subject, to, cc, bcc }).filter(
+          ([, value]) => value !== undefined
+        )
+      );
+      const updatedDraft = await api.updateDraft(ticketId, targetDraftId, authorId, updates);
+
+      const output = {
+        success: true,
+        message: `Draft ${targetDraftId} updated in FreeScout ticket #${ticketId}`,
+        ticketId,
+        draftId: targetDraftId,
+        draftVersion: draftVersion(updatedDraft.body),
+      };
+
+      return {
+        content: [{ type: 'text', text: `✅ ${output.message}` }],
+        structuredContent: output,
+      };
+    }
+  );
+
+  // Tool 8: Get Ticket Context
   server.registerTool(
     'freescout_get_ticket_context',
     {
@@ -488,7 +616,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 8: Search Tickets
+  // Tool 9: Search Tickets
   server.registerTool(
     'freescout_search_tickets',
     {
@@ -559,7 +687,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 9: Get Users
+  // Tool 10: Get Users
   server.registerTool(
     'freescout_get_users',
     {
@@ -579,7 +707,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 10: Get Mailboxes
+  // Tool 11: Get Mailboxes
   server.registerTool(
     'freescout_get_mailboxes',
     {

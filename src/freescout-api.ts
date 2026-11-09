@@ -6,6 +6,7 @@ import type {
   FreeScoutThread,
   FreeScoutUser,
   SearchFilters,
+  UpdateDraftInput,
 } from './types.js';
 
 interface RetryOptions {
@@ -450,6 +451,32 @@ export class FreeScoutAPI {
     }
 
     return this.request<FreeScoutConversation>('/conversations', 'POST', body);
+  }
+
+  /**
+   * Edit a draft thread in place. Only the fields passed are changed.
+   * Requires the in-house ZApiDraftEdit module on the FreeScout server;
+   * stock FreeScout has no endpoint for editing threads.
+   */
+  async updateDraft(
+    ticketId: string,
+    draftId: number,
+    userId: number,
+    updates: UpdateDraftInput
+  ): Promise<FreeScoutThread> {
+    const { text, expectedVersion, ...rest } = updates;
+    const body = {
+      ...rest,
+      ...(expectedVersion !== undefined ? { expected_version: expectedVersion } : {}),
+      ...(text !== undefined ? { text: this.formatForFreeScoutEditor(text) } : {}),
+      user: userId,
+    };
+
+    return this.request<FreeScoutThread>(
+      `/conversations/${ticketId}/threads/${draftId}`,
+      'PUT',
+      body
+    );
   }
 
   async updateConversation(

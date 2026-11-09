@@ -306,6 +306,30 @@ The author must have access to the mailbox (admins have access to all). The tool
 - "Draft a new email to jane@example.com from the Support mailbox about her refund"
 - "Send an email to customer 42 with subject 'Your account' and assign it to user 3"
 
+#### `freescout_update_draft`
+
+Edit an existing draft in place, instead of deleting it and creating a new one. Works for draft replies and for draft emails from `freescout_create_conversation`. Nothing is sent to the customer. Only the draft's author can edit it.
+
+> Requires the in-house `ZApiDraftEdit` FreeScout module to be active on the server: stock FreeScout has no API for editing threads, and the tool fails with a 404 without it.
+
+**Parameters:**
+
+- `ticket` (required): Ticket ID, number, or FreeScout URL
+- `draftId` (optional): Draft thread ID. Omit to use the author's only draft in the ticket
+- `text` (optional): New full body, replaces the old one (Markdown or HTML)
+- `expectedVersion` (required with `text`): `draftVersion` of the draft from `freescout_get_ticket` or the previous update. If an agent changed the draft since then, the edit is refused with a 409 instead of overwriting their text
+- `subject` (optional): New subject, for draft emails only
+- `to` (optional): New TO recipients, at least one
+- `cc`, `bcc` (optional): New recipients; `[]` clears
+- `userId` or `fromUserEmail` (optional): Draft author (defaults to env setting)
+
+At least one of `text`, `subject`, `to`, `cc`, `bcc` is required; omitted fields stay as they are.
+
+**Natural Language Examples:**
+
+- "Rewrite my draft in ticket #12345 in a friendlier tone"
+- "Change the subject of the draft email in ticket 34811"
+
 #### `freescout_get_ticket_context`
 
 Get ticket context and customer information to help craft personalized replies.

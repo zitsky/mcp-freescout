@@ -505,6 +505,43 @@ describe('FreeScoutAPI', () => {
     });
   });
 
+  describe('updateDraft', () => {
+    it('should PUT only the passed fields with text formatted', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 88 }),
+      });
+
+      await expect(
+        api.updateDraft('123', 88, 7, { text: 'Hello **Casey**', expectedVersion: 'v1', cc: [] })
+      ).resolves.toEqual({ id: 88 });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${mockBaseUrl}/api/conversations/123/threads/88`,
+        expect.objectContaining({ method: 'PUT' })
+      );
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+        text: '<p>Hello <strong>Casey</strong></p>',
+        expected_version: 'v1',
+        cc: [],
+        user: 7,
+      });
+    });
+
+    it('should not send text when only the subject changes', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 88 }),
+      });
+
+      await api.updateDraft('123', 88, 7, { subject: 'New' });
+
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ subject: 'New', user: 7 });
+    });
+  });
+
   describe('canUserAccessMailbox', () => {
     it('checks the mailbox against the user-scoped mailbox list', async () => {
       mockFetch.mockResolvedValue({

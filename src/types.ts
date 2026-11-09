@@ -12,6 +12,8 @@ export const AttachmentSchema = z.object({
 export const ThreadSchema = z.object({
   id: z.number(),
   type: z.enum(['customer', 'message', 'note']).optional(),
+  state: z.enum(['draft', 'published']).optional(),
+  createdBy: z.object({ id: z.number() }).nullable().optional(),
   body: z.string().optional(),
   created_by_customer: z.boolean().optional(),
   created_at: z.string().optional(),
@@ -135,6 +137,15 @@ export interface FreeScoutUser {
   lastName?: string;
   email: string;
   role?: string;
+}
+
+export interface UpdateDraftInput {
+  expectedVersion?: string;
+  text?: string;
+  subject?: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
 }
 
 export interface CreateConversationInput {
