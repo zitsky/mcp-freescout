@@ -542,6 +542,39 @@ describe('FreeScoutAPI', () => {
     });
   });
 
+  describe('sendDraft', () => {
+    it('should POST to the draft send endpoint with author and version', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 88, state: 'published' }),
+      });
+
+      await api.sendDraft('123', 88, 7, { expectedVersion: 'v1', status: 'pending' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${mockBaseUrl}/api/conversations/123/threads/88/send`,
+        expect.objectContaining({ method: 'POST' })
+      );
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+        user: 7,
+        expected_version: 'v1',
+        status: 'pending',
+      });
+    });
+
+    it('should omit status when not given', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 88 }) });
+
+      await api.sendDraft('123', 88, 7, { expectedVersion: 'v1' });
+
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+        user: 7,
+        expected_version: 'v1',
+      });
+    });
+  });
+
   describe('canUserAccessMailbox', () => {
     it('checks the mailbox against the user-scoped mailbox list', async () => {
       mockFetch.mockResolvedValue({

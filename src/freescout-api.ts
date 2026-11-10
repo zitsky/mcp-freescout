@@ -479,6 +479,27 @@ export class FreeScoutAPI {
     );
   }
 
+  /**
+   * Send a draft the way the Send button in FreeScout does (the email goes out
+   * after FreeScout's usual undo delay). Requires the ZApiDraftEdit module.
+   */
+  async sendDraft(
+    ticketId: string,
+    draftId: number,
+    userId: number,
+    options: { expectedVersion: string; status?: 'active' | 'pending' | 'closed' }
+  ): Promise<FreeScoutThread> {
+    return this.request<FreeScoutThread>(
+      `/conversations/${ticketId}/threads/${draftId}/send`,
+      'POST',
+      {
+        user: userId,
+        expected_version: options.expectedVersion,
+        ...(options.status ? { status: options.status } : {}),
+      }
+    );
+  }
+
   async updateConversation(
     ticketId: string,
     updates: {

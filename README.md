@@ -330,6 +330,26 @@ At least one of `text`, `subject`, `to`, `cc`, `bcc` is required; omitted fields
 - "Rewrite my draft in ticket #12345 in a friendlier tone"
 - "Change the subject of the draft email in ticket 34811"
 
+#### `freescout_send_draft`
+
+Send an existing draft (a draft reply or a draft email) to the customer, exactly as the Send button in FreeScout does: the email goes out after FreeScout's usual undo delay, and an agent can still undo it there until then. Only the draft's author can send it.
+
+> Requires the in-house `ZApiDraftEdit` FreeScout module, like `freescout_update_draft`.
+
+**Parameters:**
+
+- `ticket` (required): Ticket ID, number, or FreeScout URL
+- `expectedVersion` (required): `draftVersion` of the reviewed draft from `freescout_get_ticket` or `freescout_update_draft`. If the draft changed since, nothing is sent
+- `draftId` (optional): Draft thread ID. Omit to use the author's only draft in the ticket
+- `status` (optional): `active`, `pending`, or `closed` after sending; defaults to the mailbox's status-after-reply setting
+- `userId` or `fromUserEmail` (optional): Draft author (defaults to env setting)
+
+Notes, forwards, and phone or chat conversation drafts are not supported.
+
+**Natural Language Examples:**
+
+- "Send my draft in ticket #12345 and close the ticket"
+
 #### `freescout_get_ticket_context`
 
 Get ticket context and customer information to help craft personalized replies.

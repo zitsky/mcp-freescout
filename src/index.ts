@@ -28,6 +28,7 @@ type FreeScoutApiPort = Pick<
   | 'getUsers'
   | 'parseTicketInput'
   | 'searchConversations'
+  | 'sendDraft'
   | 'updateConversation'
   | 'updateDraft'
 >;
@@ -100,6 +101,23 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
       throw new Error(`FreeScout user not found: ${fromUserEmail}`);
     }
     return user.id;
+  };
+
+  const findAuthorDraftId = async (ticketId: string, authorId: number): Promise<number> => {
+    const conversation = await api.getConversation(ticketId, true);
+    const drafts = (conversation._embedded?.threads ?? []).filter(
+      (thread) => thread.state === 'draft' && thread.createdBy?.id === authorId
+    );
+
+    if (drafts.length === 0) {
+      throw new Error(`No draft by user ${authorId} found in ticket #${ticketId}`);
+    }
+    if (drafts.length > 1) {
+      throw new Error(
+        `User ${authorId} has several drafts in ticket #${ticketId}, pass draftId: ${drafts.map((draft) => draft.id).join(', ')}`
+      );
+    }
+    return drafts[0].id;
   };
 
   // Tool 1: Get Ticket
@@ -515,23 +533,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
       const ticketId = api.parseTicketInput(ticket);
       const authorId = await resolveAuthorId(userId, fromUserEmail);
 
-      let targetDraftId = draftId;
-      if (targetDraftId === undefined) {
-        const conversation = await api.getConversation(ticketId, true);
-        const drafts = (conversation._embedded?.threads ?? []).filter(
-          (thread) => thread.state === 'draft' && thread.createdBy?.id === authorId
-        );
-
-        if (drafts.length === 0) {
-          throw new Error(`No draft by user ${authorId} found in ticket #${ticketId}`);
-        }
-        if (drafts.length > 1) {
-          throw new Error(
-            `User ${authorId} has several drafts in ticket #${ticketId}, pass draftId: ${drafts.map((draft) => draft.id).join(', ')}`
-          );
-        }
-        targetDraftId = drafts[0].id;
-      }
+      const targetDraftId = draftId ?? (await findAuthorDraftId(ticketId, authorId));
 
       const updates = Object.fromEntries(
         Object.entries({ text, expectedVersion, subject, to, cc, bcc }).filter(
@@ -555,7 +557,68 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 8: Get Ticket Context
+  // Tool 8: Send Draft
+  server.registerTool(
+    'freescout_send_draft',
+    {
+      title: 'Send Draft',
+      description:
+        'Send an existing draft to the customer: a draft reply or a draft email from freescout_create_conversation. Works exactly like the Send button in FreeScout: the email goes out after the usual undo delay, during which an agent can still undo it in FreeScout. This emails the customer, so only call it when the user has explicitly asked to send. Requires expectedVersion (draftVersion from freescout_get_ticket or freescout_update_draft), so only the version that was reviewed is sent. Only the draft author can send it.',
+      inputSchema: z.object({
+        ticket: z.string().describe('Ticket ID, ticket number, or FreeScout URL'),
+        draftId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Draft thread ID. Omit to use the author's only draft in the ticket"),
+        expectedVersion: z
+          .string()
+          .min(1)
+          .describe(
+            'draftVersion of the reviewed draft; if the draft changed since, nothing is sent'
+          ),
+        status: z
+          .enum(['active', 'pending', 'closed'])
+          .optional()
+          .describe(
+            "Conversation status after sending (default: the mailbox's status-after-reply setting, as in FreeScout)"
+          ),
+        userId: z.number().optional().describe('Draft author user ID (default: from env)'),
+        fromUserEmail: z
+          .string()
+          .email()
+          .optional()
+          .describe('Draft author by FreeScout user email (alternative to userId)'),
+      }),
+    },
+    async ({ ticket, draftId, expectedVersion, status, userId, fromUserEmail }) => {
+      const ticketId = api.parseTicketInput(ticket);
+      const authorId = await resolveAuthorId(userId, fromUserEmail);
+      const targetDraftId = draftId ?? (await findAuthorDraftId(ticketId, authorId));
+
+      await api.sendDraft(ticketId, targetDraftId, authorId, { expectedVersion, status });
+
+      const output = {
+        success: true,
+        message: `Draft ${targetDraftId} sent in FreeScout ticket #${ticketId}`,
+        ticketId,
+        draftId: targetDraftId,
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `✅ ${output.message}\n\nFreeScout delivers it after its undo delay; until then an agent can undo it in FreeScout.`,
+          },
+        ],
+        structuredContent: output,
+      };
+    }
+  );
+
+  // Tool 9: Get Ticket Context
   server.registerTool(
     'freescout_get_ticket_context',
     {
@@ -616,7 +679,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 9: Search Tickets
+  // Tool 10: Search Tickets
   server.registerTool(
     'freescout_search_tickets',
     {
@@ -687,7 +750,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 10: Get Users
+  // Tool 11: Get Users
   server.registerTool(
     'freescout_get_users',
     {
@@ -707,7 +770,7 @@ export function buildServer(options: BuildServerOptions = {}): McpServer {
     }
   );
 
-  // Tool 11: Get Mailboxes
+  // Tool 12: Get Mailboxes
   server.registerTool(
     'freescout_get_mailboxes',
     {
